@@ -1,0 +1,214 @@
+name: uat-policy-sync
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GROUP: serra
+  ROOT_NICKNAME: dbetancurdev_juice-shop
+  BAD_GROUP: grupo-inexistente-uat
+
+jobs:
+  # A. The published actions exactly as a customer would use them (GHA-*).
+  #    The group token is in the job env and id-token is granted: we check
+  #    whether either reaches the container.
+  published-actions:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      INTEGRATES_API_TOKEN: ${{ secrets.INTEGRATES_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: sast-action
+        id: sast
+        continue-on-error: true
+        uses: fluidattacks/sast-action@1.3.0
+      - name: sca-action
+        id: sca
+        continue-on-error: true
+        uses: fluidattacks/sca-action@1.2.0
+      - name: ss-action
+        id: ss
+        continue-on-error: true
+        uses: fluidattacks/ss-action@0.3.0
+      - name: Record outcomes and image provenance
+        if: always()
+        run: |
+          mkdir -p uat-logs
+          {
+            echo "event=${{ github.event_name }} ref=${{ github.ref }} sha=${{ github.sha }}"
+            echo "sast outcome=${{ steps.sast.outcome }} vulns=${{ steps.sast.outputs.vulnerabilities_found }}"
+            echo "sca  outcome=${{ steps.sca.outcome }} vulns=${{ steps.sca.outputs.vulnerabilities_found }}"
+            echo "ss   outcome=${{ steps.ss.outcome }} vulns=${{ steps.ss.outputs.vulnerabilities_found }}"
+            for i in sast sca ss; do
+              docker image inspect --format "ghcr.io/fluidattacks/$i {{.Id}} {{index .RepoDigests 0}}" "ghcr.io/fluidattacks/$i:latest" 2>&1 || true
+            done
+            docker run --rm ghcr.io/fluidattacks/ss:latest ss scan --help 2>&1 || true
+          } | tee uat-logs/published-actions-summary.log
+          cp -f .fluidattacks-*-results.sarif uat-logs/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          retention-days: 3
+          name: uat-logs-published-actions
+          path: uat-logs/
+
+  # B. The official images called directly, with the GitHub OIDC variables forwarded.
+  #    This is the path that works if the actions are fixed (T10c real, OIDC positive, wrong group,
+  #    and the doc's literal CI command). No INTEGRATES_API_TOKEN here, so OIDC is the only credential.
+  oidc-images:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scans
+        run: |
+          set +e
+          mkdir -p uat-logs out
+          CFG="$RUNNER_TEMP/cfg"; mkdir -p "$CFG"
+          for k in sast sca; do
+            printf 'namespace: %s\nworking_dir: /src\noutput:\n  file_path: /out/%s.csv\n  format: CSV\n%s:\n  include:\n    - .\n' \
+              "$ROOT_NICKNAME" "$k" "$k" > "$CFG/$k.yaml"
+          done
+          rec() { n=$1; shift
+            { echo "CWD=$GITHUB_WORKSPACE"; echo "ARGV=$*"; echo "AUTH=GitHub OIDC (id-token), no INTEGRATES_API_TOKEN"
+              echo "DATE=$(date -u +%FT%TZ) SHA=$GITHUB_SHA EVENT=$GITHUB_EVENT_NAME"; echo ---; } > "uat-logs/$n.log"
+            "$@" >> "uat-logs/$n.log" 2>&1; rc=$?; echo "--- EXIT=$rc ---" >> "uat-logs/$n.log"; echo "$n EXIT=$rc"; }
+          D="docker run --rm -e ACTIONS_ID_TOKEN_REQUEST_URL -e ACTIONS_ID_TOKEN_REQUEST_TOKEN -v $GITHUB_WORKSPACE:/src:ro -v $CFG:/cfg:ro -v $GITHUB_WORKSPACE/out:/out -w /src"
+          for k in sast sca; do
+            rec "$k-oidc-group"      $D docker.io/fluidattacks/$k:latest $k scan /cfg/$k.yaml --group "$GROUP"
+            rec "$k-oidc-nogroup"    $D docker.io/fluidattacks/$k:latest $k scan /cfg/$k.yaml
+            rec "$k-oidc-badgroup"   $D docker.io/fluidattacks/$k:latest $k scan /cfg/$k.yaml --group "$BAD_GROUP"
+            rec "$k-oidc-doc-literal" $D docker.io/fluidattacks/$k:latest $k scan . --group "$GROUP"
+          done
+          for i in sast sca; do
+            docker image inspect --format "docker.io/fluidattacks/$i {{.Id}} {{index .RepoDigests 0}}" "docker.io/fluidattacks/$i:latest"
+          done | tee uat-logs/oidc-images-digests.log
+          cp -f out/* uat-logs/ 2>/dev/null
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          retention-days: 3
+          name: uat-logs-oidc-images
+          path: uat-logs/
+
+  # C. The ss binary from the official installer, with OIDC, as the docs show it.
+  oidc-ss:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install ss
+        run: curl -fsSL https://public.fluidattacks.com/ss/install.sh | INSTALL_DIR="$RUNNER_TEMP" sh
+      - name: Scans
+        run: |
+          set +e
+          mkdir -p uat-logs
+          SS="$RUNNER_TEMP/ss"
+          printf 'namespace: %s\nworking_dir: %s\noutput:\n  file_path: %s/uat-logs/ss.sarif\n  format: SARIF\nss:\n  include:\n    - .\n' \
+            "$ROOT_NICKNAME" "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/ss.yaml"
+          rec() { n=$1; shift
+            { echo "CWD=$GITHUB_WORKSPACE"; echo "ARGV=$*"; echo "AUTH=GitHub OIDC (id-token), no INTEGRATES_API_TOKEN"
+              echo "DATE=$(date -u +%FT%TZ) SHA=$GITHUB_SHA EVENT=$GITHUB_EVENT_NAME"; echo ---; } > "uat-logs/$n.log"
+            "$@" >> "uat-logs/$n.log" 2>&1; rc=$?; echo "--- EXIT=$rc ---" >> "uat-logs/$n.log"; echo "$n EXIT=$rc"; }
+          { "$SS" --version; sha256sum "$SS"; } > uat-logs/ss-binary.log 2>&1
+          rec ss-oidc-group-config   "$SS" scan --group "$GROUP" --config "$RUNNER_TEMP/ss.yaml"
+          rec ss-oidc-doc-literal    "$SS" scan --group "$GROUP" .
+          rec ss-oidc-doc-strict     "$SS" scan --group "$GROUP" --strict .
+          rec ss-oidc-nogroup        "$SS" scan .
+          rec ss-oidc-badgroup       "$SS" scan --group "$BAD_GROUP" .
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          retention-days: 3
+          name: uat-logs-oidc-ss
+          path: uat-logs/
+
+  # D. Both credentials present: which one answers, and does the output say so (criterion 6).
+  precedence:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      INTEGRATES_API_TOKEN: ${{ secrets.INTEGRATES_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ss
+        run: curl -fsSL https://public.fluidattacks.com/ss/install.sh | INSTALL_DIR="$RUNNER_TEMP" sh
+      - name: Scans
+        run: |
+          set +e
+          mkdir -p uat-logs
+          rec() { n=$1; shift
+            { echo "CWD=$GITHUB_WORKSPACE"; echo "ARGV=$*"; echo "AUTH=BOTH: INTEGRATES_API_TOKEN secret AND GitHub OIDC"
+              echo "DATE=$(date -u +%FT%TZ) SHA=$GITHUB_SHA EVENT=$GITHUB_EVENT_NAME"; echo ---; } > "uat-logs/$n.log"
+            "$@" >> "uat-logs/$n.log" 2>&1; rc=$?; echo "--- EXIT=$rc ---" >> "uat-logs/$n.log"; echo "$n EXIT=$rc"; }
+          rec ss-both-group "$RUNNER_TEMP/ss" scan --group "$GROUP" .
+          rec sast-both-group docker run --rm -e INTEGRATES_API_TOKEN -e ACTIONS_ID_TOKEN_REQUEST_URL -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -v "$GITHUB_WORKSPACE:/src:ro" -w /src docker.io/fluidattacks/sast:latest sast scan . --group "$GROUP"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          retention-days: 3
+          name: uat-logs-precedence
+          path: uat-logs/
+
+  # E. Pull requests only: the differential scan the action performs, but with the OIDC
+  #    credential forwarded and the nickname pinned. Shows whether diff + platform policies
+  #    work together once the action is fixed.
+  diff-with-policies:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scans
+        run: |
+          set +e
+          mkdir -p uat-logs out
+          CFG="$RUNNER_TEMP/cfg"; mkdir -p "$CFG"
+          git diff --name-only --diff-filter=ACMR "${{ github.event.pull_request.base.sha }}" HEAD > uat-logs/changed-files.txt
+          for k in sast sca; do
+            { echo "namespace: $ROOT_NICKNAME"; echo "working_dir: /src"; echo "output:"; echo "  file_path: /out/$k-diff.csv"; echo "  format: CSV"
+              echo "$k:"; echo "  include:"; sed 's/^/    - /' uat-logs/changed-files.txt; } > "$CFG/$k.yaml"
+            cp "$CFG/$k.yaml" "uat-logs/$k-diff-config.yaml"
+          done
+          rec() { n=$1; shift
+            { echo "CWD=$GITHUB_WORKSPACE"; echo "ARGV=$*"; echo "AUTH=GitHub OIDC (id-token), no INTEGRATES_API_TOKEN"
+              echo "DATE=$(date -u +%FT%TZ) SHA=$GITHUB_SHA EVENT=$GITHUB_EVENT_NAME"; echo ---; } > "uat-logs/$n.log"
+            "$@" >> "uat-logs/$n.log" 2>&1; rc=$?; echo "--- EXIT=$rc ---" >> "uat-logs/$n.log"; echo "$n EXIT=$rc"; }
+          D="docker run --rm -e ACTIONS_ID_TOKEN_REQUEST_URL -e ACTIONS_ID_TOKEN_REQUEST_TOKEN -v $GITHUB_WORKSPACE:/src:ro -v $CFG:/cfg:ro -v $GITHUB_WORKSPACE/out:/out -w /src"
+          for k in sast sca; do rec "$k-diff-oidc" $D docker.io/fluidattacks/$k:latest $k scan /cfg/$k.yaml --group "$GROUP"; done
+          cp -f out/* uat-logs/ 2>/dev/null
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          retention-days: 3
+          name: uat-logs-diff-with-policies
+          path: uat-logs/
