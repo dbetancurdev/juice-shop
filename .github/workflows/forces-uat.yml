@@ -1,0 +1,52 @@
+name: forces-uat
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: Apodo de la raíz en la plataforma
+        default: dbetancurdev_juice-shop
+
+jobs:
+  f4-docker-run:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [fluidattacks/forces, fluidattacks/forces-rs]
+        mode: [--strict, --lax]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forces ${{ matrix.image }} ${{ matrix.mode }}
+        env:
+          FORCES_TOKEN: ${{ secrets.FORCES_TOKEN }}
+          REPO_NAME: ${{ inputs.repo_name }}
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src "${{ matrix.image }}:latest" \
+            forces --token "$FORCES_TOKEN" --repo-name "$REPO_NAME" ${{ matrix.mode }} -v
+          code=$?
+          echo "::notice::${{ matrix.image }} ${{ matrix.mode }} exit=$code"
+          echo "| ${{ matrix.image }} | ${{ matrix.mode }} | $code |" >> "$GITHUB_STEP_SUMMARY"
+          # No fallamos el job para ver todas las combinaciones; el exit queda en el resumen.
+          exit 0
+
+  f5-action-oficial:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        strict: ['true', 'false']
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        uses: fluidattacks/ci-gate-action@main
+        continue-on-error: true
+        with:
+          api_token: ${{ secrets.FORCES_TOKEN }}
+          repo_name: ${{ inputs.repo_name }}
+          strict: ${{ matrix.strict }}
+      - name: Resultado de la action
+        run: |
+          echo "::notice::strict=${{ matrix.strict }} outcome=${{ steps.gate.outcome }} vulnerabilities_found=${{ steps.gate.outputs.vulnerabilities_found }}"
+          echo "| strict=${{ matrix.strict }} | ${{ steps.gate.outcome }} | vulnerabilities_found=${{ steps.gate.outputs.vulnerabilities_found }} |" >> "$GITHUB_STEP_SUMMARY"
