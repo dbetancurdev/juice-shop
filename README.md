@@ -62,7 +62,7 @@ For a detailed introduction, full list of features and architecture overview ple
 
 ## Setup
 
-> You can find some less common installation variations in
+> You can find some less common installation variations in:
 > [the _Running OWASP Juice Shop_ documentation](https://pwning.owasp-juice.shop/companion-guide/latest/part1/running.html).
 
 ### From Sources
