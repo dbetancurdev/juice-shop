@@ -2,6 +2,8 @@ const { Router } = require("express");
 const { exec } = require("child_process");
 
 const router = Router();
+// Test comment
+
 
 // F004 — CWE-78 — inyección de comandos. 8.1 High.
 router.get("/al04/files", function (req, res) {
@@ -17,6 +19,9 @@ router.get("/al04/remember", function (req, res) {
   res.cookie("rememberKey", key);
   res.json({ ok: true });
 });
+
+// Test comment
+
 
 // F004 bis — CWE-78 — segunda inyección de comandos. 8.1 High.
 router.get("/al04/logs", function (req, res) {
