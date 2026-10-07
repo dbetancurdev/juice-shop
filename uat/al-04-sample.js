@@ -37,3 +37,11 @@ router.get("/al04/backup", function (req, res) {
   });
 });
 
+// F004 quater — CWE-78 — cuarta inyección de comandos. 8.1 High.
+router.get("/al04/export", function (req, res) {
+  var path = req.params["path"];
+  exec("zip -r /tmp/out.zip " + path, (error, stdout) => {
+    res.json({ stdout });
+  });
+});
+
