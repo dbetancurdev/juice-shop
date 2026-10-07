@@ -18,3 +18,12 @@ router.get("/al04/remember", function (req, res) {
   res.json({ ok: true });
 });
 
+// F004 bis — CWE-78 — segunda inyección de comandos. 8.1 High.
+router.get("/al04/logs", function (req, res) {
+  var name = req.params["name"];
+  exec("cat /var/log/" + name + ".log", (error, stdout) => {
+    res.json({ stdout });
+  });
+});
+
+
