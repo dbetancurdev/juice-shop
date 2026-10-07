@@ -10,3 +10,11 @@ router.get("/al04/files", function (req, res) {
     res.json({ stdout });
   });
 });
+
+// F034 — CWE-338 — aleatoriedad predecible. 1.7 Low.
+router.get("/al04/remember", function (req, res) {
+  let key = Math.random().toString();
+  res.cookie("rememberKey", key);
+  res.json({ ok: true });
+});
+
