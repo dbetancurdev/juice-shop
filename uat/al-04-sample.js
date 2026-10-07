@@ -31,4 +31,11 @@ router.get("/al04/logs", function (req, res) {
   });
 });
 
+// F004 ter — CWE-78 — tercera inyección de comandos. 8.1 High.
+router.get("/al04/backup", function (req, res) {
+  var target = req.params["target"];
+  exec("tar -czf /tmp/backup.tgz " + target, (error, stdout) => {
+    res.json({ stdout });
+  });
+});
 
