@@ -13,4 +13,10 @@
     exec("ls target/b/" + folder + "/", (error, stdout) => res.json({ stdout }));
   });
 
+
+  router.get("/pr02/d", function (req, res) {
+    var tag = req.params["tag"];
+    exec("ls target/d/" + tag + "/", (error, stdout) => res.json({ stdout }));
+  });
+
   module.exports = router;
