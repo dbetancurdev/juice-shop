@@ -13,16 +13,6 @@
     exec("ls target/b/" + folder + "/", (error, stdout) => res.json({ stdout }));
   });
 
-  router.get("/pr02/c", function (req, res) {
-    var name = req.params["name"];
-    exec("ls target/c/" + name + "/", (error, stdout) => res.json({ stdout }));
-  });
-
-  router.get("/pr02/d", function (req, res) {
-    var tag = req.params["tag"];
-    exec("ls target/d/" + tag + "/", (error, stdout) => res.json({ stdout }));
-  });
-
   router.get("/pr02/remember", function (req, res) {
     let key = Math.random().toString();
     res.cookie("rememberKey", key);
