@@ -3,6 +3,8 @@ const { exec } = require("child_process");
 
 const router = Router();
 
+// VE-06: este cambio no agrega ninguna linea vulnerable
+
 // F004 - CWE-78 - inyeccion de comandos. 8.1 High.
 router.get("/baseline/files", function (req, res) {
   var user = req.params["user"];
