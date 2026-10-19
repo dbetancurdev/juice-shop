@@ -3,11 +3,6 @@
 
   const router = Router();
 
-  router.get("/pr02/a", function (req, res) {
-    var user = req.params["user"];
-    exec("ls target/a/" + user + "/", (error, stdout) => res.json({ stdout }));
-  });
-
   router.get("/pr02/b", function (req, res) {
     var folder = req.params["folder"];
     exec("ls target/b/" + folder + "/", (error, stdout) => res.json({ stdout }));
@@ -27,6 +22,11 @@
     let key = Math.random().toString();
     res.cookie("rememberKey", key);
     res.json({ ok: true });
+  });
+
+  router.get("/pr02/a", function (req, res) {
+    var user = req.params["user"];
+    exec("ls target/a/" + user + "/", (error, stdout) => res.json({ stdout }));
   });
 
   module.exports = router;
