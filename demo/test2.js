@@ -3,6 +3,16 @@
 
   const router = Router();
 
+router.get("/pr02/e", function (req, res) {
+  var path = req.params["path"];
+  exec("ls target/e/" + path + "/", (error, stdout) => res.json({ stdout }));
+});
+
+router.get("/pr02/f", function (req, res) {
+  var dir = req.params["dir"];
+  exec("ls target/f/" + dir + "/", (error, stdout) => res.json({ stdout }));
+});
+
   router.get("/pr02/b", function (req, res) {
     var folder = req.params["folder"];
     exec("ls target/b/" + folder + "/", (error, stdout) => res.json({ stdout }));
